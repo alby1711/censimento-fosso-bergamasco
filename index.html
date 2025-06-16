@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebApp Censimento Fosso Bergamasco</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet.js CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <!-- html2canvas for capturing map image -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        body {
+            background-color: #f0fdf4; /* green-50 */
+        }
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-in-out;
+        }
+        .accordion-header.active svg {
+            transform: rotate(180deg);
+        }
+        .modal-overlay {
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .map-container {
+             height: 70vh;
+             width: 90vw;
+             max-width: 1200px;
+        }
+        #map-view {
+            height: 100%;
+            width: 100%;
+        }
+         #toast-message {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        #toast-message.show {
+            opacity: 1;
+            visibility: visible;
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <!-- Header -->
+    <header class="bg-white shadow-md sticky top-0 z-40">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-center h-20">
+                <h1 class="text-xl sm:text-2xl font-bold text-green-800">Censimento Fosso Bergamasco</h1>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto p-4 sm:p-6 lg:p-8 space-y-8 mb-16">
+        
+        <!-- Riquadro Nuovo Rilevamento -->
+        <div id="new-survey-panel" class="bg-white p-6 rounded-lg shadow-sm">
+            <h2 id="form-title" class="text-2xl font-bold text-green-800 mb-4">Nuovo Rilevamento</h2>
+            
+            <!-- Step 1: Definizione Tratto -->
+            <div class="mb-6">
+                 <h3 class="font-semibold text-green-700 mb-2">1. Definizione Tratto *</h3>
+                 <p class="text-sm text-gray-600 mb-3">Clicca il pulsante per tracciare il percorso sulla mappa. (Obbligatorio)</p>
+                 <button id="open-map-btn" class="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">Disegna Tratto su Mappa</button>
+                 <div class="mt-4 text-sm">
+                    <span class="font-semibold text-gray-700">Lunghezza Tracciato:</span>
+                    <span id="distance-display" class="font-bold text-green-700 text-lg ml-2">0 m</span>
+                 </div>
+            </div>
+
+            <!-- Step 2: Dati -->
+            <div>
+                <h3 class="font-semibold text-green-700 mb-2">2. Dati del Rilevamento</h3>
+                <form id="census-form" class="space-y-4">
+                    <input type="hidden" id="editing-survey-index" name="editing-survey-index">
+                    <div id="accordion-container" class="space-y-2"></div>
+                    <div id="form-buttons" class="pt-4 flex justify-end space-x-3">
+                        <button type="button" id="cancel-edit-btn" class="px-6 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors hidden">Annulla Modifica</button>
+                        <button type="submit" id="save-btn" class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">Salva Rilevamento</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Riquadro Rilevamenti Archiviati -->
+        <div class="bg-white p-6 rounded-lg shadow-sm">
+            <h2 class="text-2xl font-bold text-green-800 mb-4">Rilevamenti Archiviati</h2>
+            <div id="survey-list" class="space-y-3">
+                <!-- I rilevamenti salvati verranno inseriti qui dal JS -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Map Modal -->
+    <div id="map-modal" class="modal-overlay hidden fixed inset-0 items-center justify-center p-4">
+        <div class="map-container bg-white rounded-lg shadow-2xl flex flex-col p-4">
+             <h3 class="text-xl font-bold text-green-800 mb-2">Disegna il Tracciato</h3>
+             <p class="text-sm text-gray-600 mb-4">Clicca sulla mappa per aggiungere punti al tracciato. Trascina i marker per aggiustarli.</p>
+             <div id="map-view" class="flex-grow rounded-md border"></div>
+             <div class="mt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div>
+                    <span class="font-semibold">Lunghezza:</span>
+                    <span id="modal-distance" class="font-bold text-lg ml-2">0 m</span>
+                </div>
+                <div class="flex space-x-2">
+                    <button id="reset-map-btn" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors">Pulisci</button>
+                    <button id="cancel-map-btn" class="px-4 py-2 bg-gray-700 text-white rounded-md hover:bg-gray-800 transition-colors">Annulla</button>
+                    <button id="confirm-map-btn" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">Conferma Tracciato</button>
+                </div>
+             </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay hidden fixed inset-0 items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-bold text-red-800">Conferma Eliminazione</h3>
+            <p class="text-gray-600 my-4">Sei sicuro di voler eliminare questo rilevamento? L'azione è irreversibile.</p>
+            <div class="flex justify-end space-x-3">
+                <button id="cancel-delete-btn" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors">Annulla</button>
+                <button id="confirm-delete-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Conferma Eliminazione</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Toast Message -->
+    <div id="toast-message"></div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- GLOBAL STATE ---
+        let tempLatLngs = [], tempMarkers = [], tempPolyline = null;
+        let finalPath = [], finalDistance = "0 m";
+        let surveyToDeleteIndex = null;
+        
+        // --- UI ELEMENTS ---
+        const form = document.getElementById('census-form');
+        const formTitle = document.getElementById('form-title');
+        const saveBtn = document.getElementById('save-btn');
+        const cancelEditBtn = document.getElementById('cancel-edit-btn');
+        const editingSurveyIndexInput = document.getElementById('editing-survey-index');
+        const deleteModal = document.getElementById('delete-modal');
+        const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+        // --- DATA STRUCTURE ---
+        const formSections = [
+            { title: 'Anagrafica Tratto', id: 'anagrafica', fields: [ { name: 'date', label: 'Data Rilevamento', type: 'date' }, { name: 'comune', label: 'Comune/i', type: 'text' }, { name: 'localita', label: 'Località / Frazione', type: 'text' }, { name: 'rilevatore', label: 'Rilevatore', type: 'text' } ] },
+            { title: 'Caratteristiche Idrauliche e Strutturali', id: 'caratteristiche', fields: [ { name: 'tipologia_alveo', label: 'Tipologia Alveo', type: 'radio', options: ['A cielo aperto', 'Tombinato', 'Misto']}, { name: 'materiale_sponde', label: 'Materiale Sponde', type: 'checkbox', options: ['Terra / Naturale', 'Cemento / Calcestruzzo', 'Muratura in pietrame', 'Palancole']}, { name: 'materiale_fondo', label: 'Materiale Fondo', type: 'radio', options: ['Naturale (terra/ghiaia)', 'Cemento / Calcestruzzo', 'Misto']}, { name: 'larghezza_m', label: 'Larghezza Media (m)', type: 'number', placeholder: 'es. 2.5'}, { name: 'profondita_m', label: 'Profondità Media (m)', type: 'number', placeholder: 'es. 1.2'}, { name: 'presenza_acqua', label: 'Presenza di Acqua', type: 'radio', options: ['Sì', 'In secca']} ] },
+            { title: 'Stato di Manutenzione e Criticità', id: 'manutenzione', fields: [ { name: 'pulizia_alveo', label: 'Pulizia Alveo', type: 'select', options: ['Ottimale', 'Sufficiente', 'Critico']}, { name: 'stato_sponda_dx', label: 'Stato Sponda Destra', type: 'select', options: ['Stabile', 'Erosione Lieve', 'Frana/Cedimento']}, { name: 'stato_sponda_sx', label: 'Stato Sponda Sinistra', type: 'select', options: ['Stabile', 'Erosione Lieve', 'Frana/Cedimento']}, { name: 'presenza_scarichi', label: 'Presenza di Scarichi', type: 'radio', options: ['Nessuno visibile', 'Sospetto', 'Noto/Autorizzato']} ] },
+            { title: 'Opere e Manufatti', id: 'opere', fields: [ { name: 'opere_note', label: 'Descrizione opere e manufatti', type: 'textarea', placeholder: 'Es: Ponte in cemento in buono stato...'} ] },
+            { title: 'Aspetti Ambientali e Paesaggistici', id: 'ambiente', fields: [ { name: 'qualita_acqua', label: 'Qualità Percepita Acqua', type: 'checkbox', options: ['Limpida', 'Torba', 'Schiumosa', 'Odore anomalo']}, { name: 'vegetazione_riparia', label: 'Vegetazione Riparia', type: 'checkbox', options: ['Scarsa o assente', 'Specie autoctone', 'Specie infestanti']}, { name: 'fauna_osservata', label: 'Fauna Osservata', type: 'textarea', placeholder: 'Avvistamenti di pesci, avifauna...'}, { name: 'valore_storico', label: 'Valore Storico/Culturale', type: 'textarea', placeholder: 'Presenza di lavatoi, mulini...'} ] },
+            { title: 'Documentazione e Note', id: 'documentazione', fields: [ { name: 'foto', label: 'Carica Foto', type: 'file', multiple: true }, { name: 'note_libere', label: 'Note Libere Aggiuntive', type: 'textarea', placeholder: 'Qualsiasi altra osservazione...'} ] }
+        ];
+
+        const accordionContainer = document.getElementById('accordion-container');
+        
+        // --- DYNAMIC FORM BUILDER ---
+        formSections.forEach((section) => {
+            const sectionDiv = document.createElement('div');
+            sectionDiv.className = 'border border-green-200 rounded-lg';
+            const header = document.createElement('div');
+            header.className = 'accordion-header flex justify-between items-center cursor-pointer p-3 bg-green-50 rounded-t-lg';
+            header.innerHTML = `<h3 class="font-semibold text-green-800">${section.title}</h3><svg class="w-5 h-5 transition-transform duration-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>`;
+            const content = document.createElement('div');
+            content.className = 'accordion-content';
+            const contentWrapper = document.createElement('div');
+            contentWrapper.className = 'p-4 border-t border-green-200 space-y-4';
+            section.fields.forEach(field => {
+                const fieldDiv = document.createElement('div');
+                let fieldHTML = `<label for="${field.name}" class="block text-sm font-medium text-gray-700">${field.label}</label>`;
+                const inputClasses = 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm';
+                switch(field.type) {
+                    case 'text': case 'number': case 'date':
+                        fieldHTML += `<input type="${field.type}" id="${field.name}" name="${field.name}" class="${inputClasses}" placeholder="${field.placeholder || ''}">`; break;
+                    case 'textarea':
+                        fieldHTML += `<textarea id="${field.name}" name="${field.name}" rows="3" class="${inputClasses}" placeholder="${field.placeholder || ''}"></textarea>`; break;
+                    case 'select':
+                        fieldHTML += `<select id="${field.name}" name="${field.name}" class="${inputClasses}"><option value="">Seleziona...</option>`;
+                        field.options.forEach(opt => fieldHTML += `<option value="${opt}">${opt}</option>`);
+                        fieldHTML += `</select>`; break;
+                    case 'radio':
+                        fieldHTML += `<div class="mt-2 space-y-2">`;
+                        field.options.forEach(opt => {
+                            fieldHTML += `<div class="flex items-center"><input id="${field.name}_${opt}" name="${field.name}" type="radio" value="${opt}" class="h-4 w-4 text-green-600 border-gray-300 focus:ring-green-500"><label for="${field.name}_${opt}" class="ml-2 block text-sm text-gray-900">${opt}</label></div>`;
+                        });
+                        fieldHTML += `</div>`; break;
+                    case 'checkbox':
+                        fieldHTML += `<div class="mt-2 space-y-2">`;
+                        field.options.forEach(opt => {
+                            fieldHTML += `<div class="flex items-center"><input id="${field.name}_${opt}" name="${field.name}_${opt}" type="checkbox" value="${opt}" class="h-4 w-4 rounded text-green-600 border-gray-300 focus:ring-green-500"><label for="${field.name}_${opt}" class="ml-2 block text-sm text-gray-900">${opt}</label></div>`;
+                        });
+                        fieldHTML += `</div>`; break;
+                    case 'file':
+                         fieldHTML += `<input type="file" id="${field.name}" name="${field.name}" class="${inputClasses}" ${field.multiple ? 'multiple' : ''} accept="image/*">`; break;
+                }
+                fieldDiv.innerHTML = fieldHTML;
+                contentWrapper.appendChild(fieldDiv);
+            });
+            content.appendChild(contentWrapper);
+            sectionDiv.appendChild(header);
+            sectionDiv.appendChild(content);
+            accordionContainer.appendChild(sectionDiv);
+        });
+        
+        // Set today's date
+        document.getElementById('date').valueAsDate = new Date();
+
+
+        // --- MAP MODAL & LOGIC ---
+        const mapModal = document.getElementById('map-modal');
+        const openMapBtn = document.getElementById('open-map-btn');
+        const confirmMapBtn = document.getElementById('confirm-map-btn');
+        const cancelMapBtn = document.getElementById('cancel-map-btn');
+        const resetMapBtn = document.getElementById('reset-map-btn');
+        const modalDistanceEl = document.getElementById('modal-distance');
+        const mainDistanceDisplay = document.getElementById('distance-display');
+
+        const map = L.map('map-view').setView([45.6, 9.7], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        const openModal = () => { mapModal.classList.remove('hidden'); mapModal.classList.add('flex'); setTimeout(() => map.invalidateSize(), 10); };
+        const closeModal = () => { mapModal.classList.add('hidden'); mapModal.classList.remove('flex'); };
+        
+        const resetMap = () => {
+            tempMarkers.forEach(m => map.removeLayer(m));
+            if (tempPolyline) map.removeLayer(tempPolyline);
+            tempLatLngs = [];
+            tempMarkers = [];
+            tempPolyline = null;
+            modalDistanceEl.textContent = '0 m';
+        };
+
+        const redrawPolyline = () => {
+            if (tempPolyline) { map.removeLayer(tempPolyline); }
+            if (tempLatLngs.length > 1) { tempPolyline = L.polyline(tempLatLngs, {color: '#166534', weight: 4}).addTo(map); }
+             updateDistance();
+        };
+
+        const updateDistance = () => {
+            let totalDistance = 0;
+            for (let i = 0; i < tempLatLngs.length - 1; i++) {
+                totalDistance += tempLatLngs[i].distanceTo(tempLatLngs[i+1]);
+            }
+            modalDistanceEl.textContent = `${totalDistance.toFixed(0)} m`;
+        };
+
+        map.on('click', (e) => {
+            const latlng = e.latlng;
+            const marker = L.circleMarker(latlng, { radius: 6, color: '#166534', fillColor: '#dcfce7', fillOpacity: 1, draggable: true }).addTo(map);
+            marker.on('drag', (ev) => {
+                const index = tempMarkers.indexOf(ev.target);
+                if (index > -1) { tempLatLngs[index] = ev.target.getLatLng(); redrawPolyline(); }
+            });
+            tempLatLngs.push(latlng);
+            tempMarkers.push(marker);
+            redrawPolyline();
+        });
+
+        openMapBtn.addEventListener('click', openModal);
+        cancelMapBtn.addEventListener('click', closeModal);
+        resetMapBtn.addEventListener('click', resetMap);
+        
+        confirmMapBtn.addEventListener('click', () => {
+            if (tempLatLngs.length >= 2) {
+                finalPath = [...tempLatLngs];
+                finalDistance = modalDistanceEl.textContent;
+                mainDistanceDisplay.textContent = finalDistance;
+                closeModal();
+            } else {
+                showToast('Il tracciato deve contenere almeno 2 punti.', 'bg-red-600');
+            }
+        });
+        
+        // --- ACCORDION LOGIC ---
+        const accordionHeaders = document.querySelectorAll('.accordion-header');
+        if(accordionHeaders.length > 0) { accordionHeaders[0].classList.add('active'); accordionHeaders[0].nextElementSibling.style.maxHeight = accordionHeaders[0].nextElementSibling.scrollHeight + "px"; }
+        accordionHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                header.classList.toggle('active');
+                const content = header.nextElementSibling;
+                if (header.classList.contains('active')) { content.style.maxHeight = content.scrollHeight + "px"; } 
+                else { content.style.maxHeight = null; }
+            });
+        });
+
+        // --- DATA HANDLING AND REPORTING ---
+        let savedSurveys = [];
+
+        const formatDate = (dateString) => {
+            if (!dateString) return 'N/D';
+            const [year, month, day] = dateString.split('-');
+            return `${day}/${month}/${year}`;
+        }
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const editingIndex = editingSurveyIndexInput.value;
+
+            if (finalPath.length < 2) { showToast('Errore: Definire un tratto sulla mappa prima di salvare.', 'bg-red-600'); return; }
+
+            const formData = new FormData(form);
+            const data = {};
+
+            for (let [key, value] of formData.entries()) {
+                if (!key.startsWith('editing-survey-index') && !document.querySelector(`[name="${key}"][type="checkbox"]`)) { data[key] = value; }
+            }
+            formSections.forEach(section => {
+                section.fields.forEach(field => {
+                    if (field.type === 'checkbox') {
+                        const checked = form.querySelectorAll(`input[name^="${field.name}_"]:checked`);
+                        data[field.name] = Array.from(checked).map(cb => cb.value);
+                    }
+                });
+            });
+
+            data.path = finalPath;
+            data.length_m = finalDistance;
+            
+            if (editingIndex !== '') {
+                savedSurveys[editingIndex] = { ...savedSurveys[editingIndex], ...data };
+                showToast('Rilevamento aggiornato con successo!', 'bg-green-600');
+            } else {
+                savedSurveys.push(data);
+                showToast('Rilevamento salvato con successo!', 'bg-green-600');
+            }
+            
+            updateSurveyList();
+            resetFormAndState();
+        });
+
+        function updateSurveyList() {
+            const listEl = document.getElementById('survey-list');
+            listEl.innerHTML = '';
+            if (savedSurveys.length === 0) { listEl.innerHTML = `<p class="text-gray-500">Nessun rilevamento archiviato.</p>`; return; }
+            
+            savedSurveys.forEach((survey, index) => {
+                const item = document.createElement('div');
+                item.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-lg border';
+                item.innerHTML = `
+                    <div>
+                        <p class="font-bold text-green-800">${survey.comune || 'N/D'} - ${formatDate(survey.date)}</p>
+                        <p class="text-sm text-gray-600">${survey.localita || ''} - ${survey.length_m}</p>
+                    </div>
+                    <div class="flex space-x-2 flex-wrap gap-2">
+                        <button class="js-edit-survey px-3 py-1 bg-orange-500 text-white text-xs rounded-md hover:bg-orange-600 transition-colors" data-index="${index}">Modifica</button>
+                        <button class="js-start-from px-3 py-1 bg-blue-500 text-white text-xs rounded-md hover:bg-blue-600 transition-colors" data-index="${index}">Continua</button>
+                        <button class="js-create-pdf px-3 py-1 bg-green-500 text-white text-xs rounded-md hover:bg-green-600 transition-colors" data-index="${index}">PDF</button>
+                        <button class="js-delete-survey px-3 py-1 bg-red-600 text-white text-xs rounded-md hover:bg-red-700 transition-colors" data-index="${index}">Elimina</button>
+                    </div>
+                `;
+                listEl.appendChild(item);
+            });
+        }
+        
+        document.getElementById('survey-list').addEventListener('click', (e) => {
+            const pdfButton = e.target.closest('.js-create-pdf');
+            const startButton = e.target.closest('.js-start-from');
+            const editButton = e.target.closest('.js-edit-survey');
+            const deleteButton = e.target.closest('.js-delete-survey');
+
+            if (pdfButton) {
+                const surveyIndex = pdfButton.dataset.index;
+                pdfButton.textContent = 'Creazione...';
+                pdfButton.disabled = true;
+                generatePdf(surveyIndex).finally(() => {
+                    pdfButton.textContent = 'PDF';
+                    pdfButton.disabled = false;
+                });
+            }
+
+            if (startButton) {
+                const surveyIndex = startButton.dataset.index;
+                const survey = savedSurveys[surveyIndex];
+                if (survey && survey.path && survey.path.length > 0) {
+                    startFromPrevious(survey.path[survey.path.length - 1]);
+                }
+            }
+            
+            if (editButton) {
+                const surveyIndex = editButton.dataset.index;
+                loadSurveyForEditing(surveyIndex);
+            }
+
+            if (deleteButton) {
+                surveyToDeleteIndex = deleteButton.dataset.index;
+                deleteModal.classList.remove('hidden');
+                deleteModal.classList.add('flex');
+            }
+        });
+        
+        function loadSurveyForEditing(surveyIndex) {
+            const survey = savedSurveys[surveyIndex];
+            if (!survey) return;
+
+            resetFormAndState();
+
+            // Populate form
+            Object.keys(survey).forEach(key => {
+                const field = form.elements[key];
+                if (field) {
+                    // FIX: Do not set value for file inputs
+                    if (field.type !== 'file' && field.type !== 'radio' && field.type !== 'checkbox') {
+                        field.value = survey[key];
+                    }
+                }
+                const radioFields = form.querySelectorAll(`[name="${key}"]`);
+                 if(radioFields.length > 1){ radioFields.forEach(r => { if(r.value === survey[key]) r.checked = true; }); }
+                 if(Array.isArray(survey[key])){
+                    survey[key].forEach(val => {
+                        const checkbox = form.querySelector(`input[type="checkbox"][value="${val}"]`);
+                        if(checkbox) checkbox.checked = true;
+                    })
+                 }
+            });
+
+            editingSurveyIndexInput.value = surveyIndex;
+            finalPath = survey.path;
+            finalDistance = survey.length_m;
+            mainDistanceDisplay.textContent = finalDistance;
+            
+            formTitle.textContent = `Modifica Rilevamento (${survey.comune} - ${formatDate(survey.date)})`;
+            saveBtn.textContent = 'Salva Modifiche';
+            cancelEditBtn.classList.remove('hidden');
+
+            document.getElementById('new-survey-panel').scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function resetFormAndState() {
+            form.reset();
+            editingSurveyIndexInput.value = '';
+            
+            mainDistanceDisplay.textContent = '0 m';
+            finalPath = []; finalDistance = "0 m";
+            resetMap();
+            
+            formTitle.textContent = 'Nuovo Rilevamento';
+            saveBtn.textContent = 'Salva Rilevamento';
+            cancelEditBtn.classList.add('hidden');
+            document.getElementById('date').valueAsDate = new Date();
+        }
+
+        cancelEditBtn.addEventListener('click', resetFormAndState);
+        cancelDeleteBtn.addEventListener('click', () => {
+            surveyToDeleteIndex = null;
+            deleteModal.classList.add('hidden');
+            deleteModal.classList.remove('flex');
+        });
+        confirmDeleteBtn.addEventListener('click', () => {
+            if(surveyToDeleteIndex !== null) {
+                savedSurveys.splice(surveyToDeleteIndex, 1);
+                updateSurveyList();
+                showToast('Rilevamento eliminato.', 'bg-blue-600');
+            }
+            surveyToDeleteIndex = null;
+            deleteModal.classList.add('hidden');
+            deleteModal.classList.remove('flex');
+        });
+
+
+        function startFromPrevious(coords) {
+            resetFormAndState();
+            document.getElementById('new-survey-panel').scrollIntoView({ behavior: 'smooth' });
+            openModal();
+            resetMap(); 
+            
+            const startCoords = L.latLng(coords.lat, coords.lng);
+            const marker = L.circleMarker(startCoords, { radius: 6, color: '#166534', fillColor: '#dcfce7', fillOpacity: 1, draggable: true }).addTo(map);
+            tempLatLngs.push(startCoords);
+            tempMarkers.push(marker);
+            map.setView(startCoords, 15);
+        }
+
+        async function generatePdf(surveyIndex) {
+            const survey = savedSurveys[surveyIndex];
+            if (!survey) return;
+
+            const tempMapContainer = document.createElement('div');
+            tempMapContainer.style.position = 'absolute';
+            tempMapContainer.style.left = '-9999px';
+            tempMapContainer.style.width = '500px';
+            tempMapContainer.style.height = '350px';
+            document.body.appendChild(tempMapContainer);
+            
+            const staticMap = L.map(tempMapContainer, { zoomControl: false, attributionControl: false, preferCanvas: true });
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(staticMap);
+
+            const path = survey.path.map(p => L.latLng(p.lat, p.lng));
+            L.marker(path[0], { icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], shadowSize: [41, 41] }) }).addTo(staticMap);
+            L.marker(path[path.length - 1], { icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], shadowSize: [41, 41] }) }).addTo(staticMap);
+            L.polyline(path, {color: '#166534', weight: 4}).addTo(staticMap);
+            const bounds = L.latLngBounds(path);
+            staticMap.fitBounds(bounds, { padding: [40, 40] });
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const canvas = await html2canvas(tempMapContainer, { useCORS: true });
+            const mapImageData = canvas.toDataURL('image/png');
+            document.body.removeChild(tempMapContainer);
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const pageWidth = doc.internal.pageSize.getWidth();
+            let y = 0;
+
+            const addHeader = (title) => {
+                doc.setFillColor(22, 101, 52); // green-800
+                doc.rect(0, 0, pageWidth, 25, 'F');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(18);
+                doc.setTextColor(255, 255, 255);
+                doc.text('Report di Rilevamento', pageWidth / 2, 12, { align: 'center' });
+                doc.setFontSize(10);
+                doc.setTextColor(200, 255, 200);
+                doc.text(`${survey.comune} - ${formatDate(survey.date)}`, pageWidth / 2, 19, { align: 'center' });
+                y = 35; 
+            };
+            
+            const addFooter = (pageNum, totalPages) => {
+                 doc.setFontSize(8);
+                 doc.setTextColor(150);
+                 doc.text(`Pagina ${pageNum} di ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+                 doc.setTextColor(0, 0, 0); // Reset color for next page content
+            }
+            
+            const addNewPage = () => {
+                addFooter(doc.internal.getCurrentPageInfo().pageNumber, doc.internal.getNumberOfPages());
+                doc.addPage();
+                y = 20;
+            };
+
+            const addSectionTitle = (title) => {
+                if (y > pageHeight - 25) { addNewPage(); }
+                y += 5;
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(22, 101, 52); // green-800
+                doc.text(title, 14, y);
+                y += 7;
+                doc.setDrawColor(22, 101, 52);
+                doc.line(14, y, pageWidth - 14, y);
+                y += 5;
+                doc.setFontSize(10);
+                doc.setTextColor(0, 0, 0);
+            };
+
+            const addDataRow = (label, value) => {
+                if (!value || (Array.isArray(value) && value.length === 0)) return false;
+                const valueText = Array.isArray(value) ? value.join(', ') : String(value);
+                
+                const lines = doc.splitTextToSize(valueText, pageWidth - 90);
+                const requiredHeight = (lines.length * 5) + 4;
+
+                if (y + requiredHeight > pageHeight - 15) { addNewPage(); }
+
+                doc.setFont('helvetica', 'bold');
+                doc.text(label + ':', 15, y, { maxWidth: 60 });
+                doc.setFont('helvetica', 'normal');
+                
+                doc.text(lines, 75, y);
+                y += requiredHeight;
+                return true;
+            };
+
+            addHeader();
+            addSectionTitle('Dati Anagrafici e Geografici');
+            addDataRow('Data Rilevamento', formatDate(survey.date));
+            addDataRow('Rilevatore', survey.rilevatore);
+            addDataRow('Comune', survey.comune);
+            addDataRow('Località', survey.localita);
+            addDataRow('Lunghezza', survey.length_m);
+            
+            y += 5;
+            if (y > pageHeight - 90) { addNewPage(); }
+            addSectionTitle('Mappa del Tratto');
+            doc.addImage(mapImageData, 'PNG', 15, y, 180, 80, undefined, 'FAST');
+            y += 90;
+
+            formSections.slice(1).forEach(section => {
+                 const fieldsWithValues = section.fields.filter(field => survey[field.name] && (!Array.isArray(survey[field.name]) || survey[field.name].length > 0));
+                 if (fieldsWithValues.length > 0) {
+                    addSectionTitle(section.title);
+                    fieldsWithValues.forEach(field => {
+                        if (field.type !== 'file') {
+                            addDataRow(field.label, survey[field.name]);
+                        }
+                    });
+                 }
+            });
+
+            const pageCount = doc.internal.getNumberOfPages();
+            for(let i = 1; i <= pageCount; i++) {
+                doc.setPage(i);
+                addFooter(i, pageCount);
+            }
+
+            doc.save(`report_fosso_${survey.comune}_${survey.date.replace(/-/g, '')}.pdf`);
+        }
+
+
+        function showToast(message, bgColor) {
+            const toast = document.getElementById('toast-message');
+            toast.textContent = message;
+            toast.className = ``; // reset
+            toast.classList.add('show', bgColor);
+            setTimeout(() => { toast.classList.remove('show'); }, 3000);
+        }
+        
+        // Initial population
+        updateSurveyList();
+    });
+    </script>
+</body>
+</html>
